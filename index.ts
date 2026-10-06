@@ -3,7 +3,7 @@
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.d.ts";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { OAuthClientInformationMixed } from "@modelcontextprotocol/sdk/shared/auth";
+import type { OAuthClientInformationMixed, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth";
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
 
@@ -15,13 +15,16 @@ const client = new Client({
 
 let codeVerifier = '';
 let clientInformation: OAuthClientInformationMixed;
+let savedTokens: OAuthTokens;
+
 const authProvider: OAuthClientProvider = {
-    redirectUrl: 'http://localhost:3000',
-    clientMetadata: { redirect_uris: ['http://localhost:3000'] },
+    redirectUrl: 'http://localhost:3000/callback',
+    clientMetadata: { redirect_uris: ['http://localhost:3000/callback'] },
+    // clientInformation: () => ({ client_id: "mcp-tool-discovery" }),
     clientInformation: () => clientInformation,
-    saveClientInformation: (ci) => { clientInformation = ci },
-    tokens: () => ({ access_token: '', token_type: '' }),
-    saveTokens: (tokens) => { console.log('We need to save tokens! 🪙', tokens) },
+    saveClientInformation: (ci) => { console.log('saveClientInformation called:', ci); clientInformation = ci },
+    tokens: () => savedTokens,
+    saveTokens: (tokens) => { savedTokens = tokens; console.log('OAuth tokens saved') },
     redirectToAuthorization: (authorizationUrl: URL) => { execFile("open", [authorizationUrl.href]); },
     saveCodeVerifier: (cV: string) => { console.log(cV, '******cV'); codeVerifier = cV; },
     codeVerifier: () => { console.log(codeVerifier, '******w'); return codeVerifier; },
@@ -32,7 +35,19 @@ const transport = new StreamableHTTPClientTransport(new URL("https://mcp.upwork.
 });
 
 try {
-    const server = createServer();
+    const server = createServer(async (req, res) => {
+        const url = new URL(req.url!, "http://localhost:3000");
+        const code = url.searchParams.get('code');
+
+        if (!code) {
+            res.writeHead(400);
+            res.end("Missing authorization code");
+            return;
+        }
+
+        await transport.finishAuth(code);
+    });
+
     server.listen(3000, () => {
         console.log('Server listening on port:3000 🎧');
     });
